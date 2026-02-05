@@ -1,8 +1,7 @@
 const express = require("express");
 const authRoutes = require("./routes/auth.routes");
 const videoRoutes = require("./routes/video.routes");
-const path = require("path");
-
+const playlistRoutes = require("./routes/playlist.routes")
 
 const app = express();
 app.use(express.json());
@@ -12,8 +11,7 @@ app.get("/api/health", (req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
-app.use("/api/videos", videoRoutes)
-app.use("/media", express.static(path.join(__dirname, "..", "uploads")));
-
+app.use("/api/videos", videoRoutes);
+app.use("/api/playlists", playlistRoutes);
 
 module.exports = app;
