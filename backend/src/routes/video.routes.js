@@ -1,59 +1,98 @@
 const express = require("express");
 const router = express.Router();
 const Video = require("../models/Video")
-const path = require("path");
-const multer = require("multer");
 const { requireAuth } = require("../middleware/auth.middleware");
 
-// 1) Configure where to store files + how to name them
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        // Save into backend/uploads
-        cb(null, path.join(__dirname, "..", "..", "uploads"));
-    },
-    filename: (req, file, cb) => {
-        // Create a unique filename to avoid overwriting
-        const ext = path.extname(file.originalname);
-        const safeBase = path
-        .basename(file.originalname, ext)
-        .replace(/[^a-zA-Z0-9_-]/g, "_");
-
-        cb(null, `${Date.now()}-${safeBase}${ext}`);
+router.get("/exists", requireAuth, async (req, res) => {
+    const title = (req.query.title || "").trim();
+    if (!title) {
+        return res.status(400).json({ message: "title query param is required" });
     }
+
+    const exists = await Video.exists({
+        ownerId: req.userId,
+        title,
     });
 
-// 2) Optional: accept only video files (simple check)
-function fileFilter(req, file, cb) {
-    if (file.mimetype.startsWith("video/")) cb(null, true);
-    else cb(new Error("Only video files are allowed"), false);
-}
-
-const upload = multer({
-    storage,
-    fileFilter,
-    limits: { fileSize: 200 * 1024 * 1024 } // 200MB limit
+    res.json({ ok: true, exists: !!exists, title });
 });
 
-// 3) Upload route (protected)
-router.post("/upload", requireAuth, upload.single("video"), async (req, res) => {
-    // multer puts file info into req.file
-    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+router.post("/import", requireAuth, async (req, res) => {
+    const { title, filename, mimeType, size } = req.body;
 
-    // Public URL where it can be accessed
-    const url = `/media/${req.file.filename}`;
+    if (!filename || !title) {
+        return res.status(400).json({ message: "filename and title are required" });
+    }
 
-    const video = await Video.create({
+    try {
+        const video = await Video.create({
+            ownerId: req.userId,
+            sourceType: "local",
+            title:title.trim(),
+            filename:filename.trim(),
+            mimeType: mimeType || "application/octet-stream",
+            size: Number(size) || 0,
+        });
+        return res.status(201).json({ message: "Registered", video });
+
+    } catch (err) {
+        if (err.code === 11000) {
+            return res.status(409).json({ message: "A video with this name already exists" });
+        }
+        return res.status(500).json({ message: "Failed to register video", error: err.message });
+    }
+});
+
+router.post("/upload", requireAuth, async (req, res) => {
+    const { title, externalUrl, provider } = req.body;
+
+    if (!title || !externalUrl) {
+        return res.status(400).json({ message: "title and externalUrl are required" });
+    }
+
+    // URL validation
+    let parsedUrl;
+    try {
+        parsedUrl = new URL(externalUrl);
+    } catch {
+        return res.status(400).json({ message: "externalUrl must be a valid URL" });
+    }
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+        return res.status(400).json({ message: "Only http/https URLs are allowed" });
+    }
+
+    try {
+        const video = await Video.create({
         ownerId: req.userId,
-        originalName: req.file.originalname,
-        filename: req.file.filename,
-        mimeType: req.file.mimetype,
-        size: req.file.size,
-        url
-    });
+        sourceType: "external",
+        title: title.trim(),
+        externalUrl: parsedUrl.toString(),
+        provider: provider?.trim() || undefined,
+        });
 
-    res.status(201).json({
-        message: "Uploaded",
-        video
+        return res.status(201).json({ message: "Registered", video });
+    } catch (err) {
+        if (err.code === 11000) {
+        return res.status(409).json({ message: "A video with this title already exists" });
+        }
+        return res.status(500).json({ message: "Failed to register video" });
+    }
+});
+
+router.delete("/delete/:id", requireAuth, async (req, res) => {
+    const { id } = req.params;
+
+    const video = await Video.findOne({ _id: id, ownerId: req.userId });
+    if (!video) return res.status(404).json({ message: "Video not found" });
+
+    await Video.deleteOne({ _id: video._id });
+
+    // Return enough info for Electron to cleanup local file if needed
+    res.json({
+        ok: true,
+        sourceType: video.sourceType,
+        filename: video.filename || null,
+        title: video.title,
     });
 });
 
@@ -61,6 +100,5 @@ router.get("/list", requireAuth, async (req, res) => {
     const videos = await Video.find({ ownerId: req.userId }).sort({ createdAt: -1 });
     res.json({ videos });
 });
-
 
 module.exports = router;

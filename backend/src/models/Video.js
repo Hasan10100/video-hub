@@ -2,38 +2,70 @@ const mongoose = require("mongoose");
 
 const VideoSchema = new mongoose.Schema(
     {
-    ownerId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-        required: true
-    },
+        ownerId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            required: true,
+            index: true,
+        },
 
-    originalName: {
-        type: String,
-        required: true
-    },
+        sourceType: {
+            type: String,
+            enum: ["local", "external"],
+            required: true,
+            default: "local",
+            index: true,
+        },
 
-    filename: {
-        type: String,
-        required: true
-    },
+        // Human-friendly name shown in UI (works for both local + external)
+        title: {
+            type: String,
+            required: true,
+            trim: true,
+        },
 
-    mimeType: {
-        type: String,
-        required: true
-    },
+        // ===== Local-only =====
+        filename: {
+            type: String,
+            required: function () {
+                return this.sourceType === "local";
+            },
+        },
+        mimeType: {
+            type: String,
+            required: function () {
+                return this.sourceType === "local";
+            },
+        },
+        size: {
+            type: Number,
+            required: function () {
+                return this.sourceType === "local";
+            },
+        },
 
-    size: {
-        type: Number,
-        required: true
-    },
+        // ===== External-only =====
+        externalUrl: {
+            type: String,
+            required: function () {
+                return this.sourceType === "external";
+            },
+            trim: true,
+        },
+        provider: {
+            type: String, // "youtube", "vimeo", "direct", etc.
+            required: false,
+            trim: true,
+        },
 
-    url: {
-        type: String,
-        required: true
-    }
+        // Optional for both
+        thumbnailUrl: { type: String, required: false, trim: true },
+        durationSec: { type: Number, required: false },
     },
     { timestamps: true }
 );
+
+// Prevent same title per user (your Option 1 duplicate prevention)
+VideoSchema.index({ ownerId: 1, title: 1 }, { unique: true });
 
 module.exports = mongoose.model("Video", VideoSchema);
