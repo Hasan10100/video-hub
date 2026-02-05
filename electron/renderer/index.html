@@ -1,0 +1,266 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <title>Video Hub</title>
+        <style>
+        body { font-family: system-ui, sans-serif; padding: 24px; }
+        .card { border: 1px solid #444; border-radius: 10px; padding: 16px; max-width: 720px; }
+        pre { background: #76f868; padding: 12px; border-radius: 8px; overflow: auto; }
+        button { padding: 10px 14px; border-radius: 8px; border: 1px solid #666; background: #222; color: #fff; cursor: pointer; }
+        </style>
+    </head>
+    <body>
+        <h2>Video Hub (Desktop)</h2>
+
+        <div class="card">
+
+            <p><b>Status:</b> <span id="status">Checking backend...</span></p>
+            <button id="btn">Ping /api/health</button>
+            <pre id="out"></pre>
+
+            <script>
+                async function ping() {
+                    try {
+                        document.getElementById("status").textContent = "Loading...";
+                        const data = await window.api.getHealth();
+                        document.getElementById("status").textContent = "Backend OK ✅";
+                        document.getElementById("out").textContent = JSON.stringify(data, null, 2);
+                    } catch (e) {
+                        document.getElementById("status").textContent = "Backend NOT reachable ❌";
+                        document.getElementById("out").textContent = String(e);
+                    }
+                }
+                document.getElementById("btn").addEventListener("click", ping);
+                ping();
+            </script>
+
+            <hr />
+
+<!-- ------------------------------------------------------------------------------------------------------- -->
+
+            <h3>Login</h3>
+
+            <input id="email" placeholder="email" style="padding:8px; width:320px;" value="admin@test.com"/>
+            <br /><br />
+            <input id="password" type="password" placeholder="password" style="padding:8px; width:320px;" value="password123"/>
+            <br /><br />
+            <button id="loginBtn">Login</button>
+
+            <pre id="loginOut"></pre>
+
+            <script>
+                async function login() {
+                    const email = document.getElementById("email").value;
+                    const password = document.getElementById("password").value;
+
+                    const result = await window.api.auth.login({ email, password });
+                    document.getElementById("loginOut").textContent = JSON.stringify(result, null, 2);
+                }
+                document.getElementById("loginBtn").addEventListener("click", login);
+            </script>
+
+            <button id="logoutBtn">Logout</button>
+            <button id="statusBtn">Auth Status</button>
+            <pre id="authOut"></pre>
+
+            <script>
+                async function showStatus() {
+                    const result = await window.api.auth.status();
+                    document.getElementById("authOut").textContent = JSON.stringify(result, null, 2);
+                }
+
+                async function logout() {
+                    const result = await window.api.auth.logout();
+                    document.getElementById("authOut").textContent = JSON.stringify(result, null, 2);
+                }
+
+                document.getElementById("statusBtn").addEventListener("click", showStatus);
+                document.getElementById("logoutBtn").addEventListener("click", logout);
+
+                // optional: show status on load
+                showStatus();
+            </script>
+
+            <hr />
+
+<!-- ------------------------------------------------------------------------------------------------------- -->
+
+            <h3>Add External Video</h3>
+
+            <input
+            id="extTitle"
+            placeholder="Title"
+            style="padding: 6px; width: 320px;"
+            />
+            <br /><br />
+
+            <input
+            id="extUrl"
+            placeholder="https://..."
+            style="padding: 6px; width: 320px;"
+            />
+            <br /><br />
+
+            <button id="addExternalBtn">Add External</button>
+            <pre id="externalOut"></pre>
+
+            <script>
+                async function addExternal() {
+                    const title = document.getElementById("extTitle").value.trim();
+                    const externalUrl = document.getElementById("extUrl").value.trim();
+
+                    if (!title || !externalUrl) {
+                        alert("Title and URL are required");
+                        return;
+                    }
+
+                    const result = await window.api.videos.upload({ title, externalUrl });
+
+                    document.getElementById("externalOut").textContent = JSON.stringify(result, null, 2);
+
+                    if (result.ok) {
+                    // clear inputs
+                    document.getElementById("extTitle").value = "";
+                    document.getElementById("extUrl").value = "";
+
+                    // refresh the library list if you already have refreshLibrary()
+                    if (typeof refreshLibrary === "function") refreshLibrary();
+                    }
+                }
+
+                document
+                    .getElementById("addExternalBtn")
+                    .addEventListener("click", addExternal);
+            </script>
+
+            <hr />
+
+<!-- ------------------------------------------------------------------------------------------------------- -->
+
+            <button id="importBtn">Import Video</button>
+            <pre id="importOut"></pre>
+            <video id="player" controls style="max-width: 720px; width: 100%; margin-top: 12px;"></video>
+
+            <script>
+                async function localImport() {
+                    const result = await window.api.videos.import();
+                    document.getElementById("importOut").textContent = JSON.stringify(result, null, 2);
+
+                    if (result.ok && result.fileUrl) {
+                        document.getElementById("player").src = result.fileUrl; // ✅ plays file:///...
+                    }   
+                }
+                document.getElementById("importBtn").addEventListener("click", localImport);
+            </script>
+
+            <hr />
+
+<!-- ------------------------------------------------------------------------------------------------------- -->
+
+            <button id="refreshBtn">Refresh Library</button>
+            <ul id="videoList"></ul>
+
+            <script>
+
+                function isDirectMediaUrl(url) {
+                    try {
+                        const u = new URL(url);
+                        return /\.(mp4|webm|ogg)$/i.test(u.pathname);
+                    } catch {
+                        return false;
+                    }
+                }
+
+                async function refreshLibrary() {
+                    const result = await window.api.videos.list();
+
+                    const ul = document.getElementById("videoList");
+                    ul.innerHTML = "";
+
+                    if (!result.ok) {
+                    ul.innerHTML = `<li>${result.message || "Failed"}</li>`;
+                    return;
+                    }
+
+                    for (const v of result.videos) {
+                        const li = document.createElement("li");
+                        li.style.margin = "8px 0";
+
+                        // label
+                        const label = document.createElement("span");
+                        label.textContent = v.sourceType === "external"
+                            ? `${v.title} (external)`
+                            : (v.missing ? `${v.title} (missing file)` : v.title);
+
+                        // click-to-play for local
+                        if (v.sourceType === "local" && !v.missing && v.fileUrl) {
+                            label.style.cursor = "pointer";
+                            label.addEventListener("click", () => {
+                            document.getElementById("player").src = v.fileUrl;
+                            });
+                        }
+
+                        // click-to-open for external (if you added shell.openExternal)
+                        if (v.sourceType === "external") {
+                            label.style.cursor = "pointer";
+                            label.addEventListener("click", async () => {
+                                const player = document.getElementById("player");
+                                if (isDirectMediaUrl(v.externalUrl)) {
+                                    // Play direct video links inside the app
+                                    player.src = v.externalUrl;
+                                    player.play?.();
+                                } else {
+                                    // Open YouTube / normal webpages in browser
+                                    const r = await window.api.videos.openExternal(v.externalUrl);
+                                    if (r && r.ok === false) alert(r.message || "Failed to open link");
+                                }
+                            });
+                        }
+
+                        // delete button
+                        const delBtn = document.createElement("button");
+                        delBtn.textContent = "Delete";
+                        delBtn.style.marginLeft = "12px";
+
+                        delBtn.addEventListener("click", async (ev) => {
+                            ev.stopPropagation(); // don't trigger play/open
+
+                            const sure = confirm(`Delete "${v.title}"?`);
+                            if (!sure) return;
+
+                            const r = await window.api.videos.delete(v._id);
+                            alert(r.ok ? "Deleted" : (r.message || "Delete failed"));
+                            refreshLibrary();
+                        });
+
+                        li.appendChild(label);
+                        li.appendChild(delBtn);
+                        ul.appendChild(li);
+                    }       
+
+                }
+                document.getElementById("refreshBtn").addEventListener("click", refreshLibrary);
+                refreshLibrary(); // load on start
+            </script>
+
+            <hr />
+
+<!-- ------------------------------------------------------------------------------------------------------- -->
+
+            <button id="loadVideos">Load Videos</button>
+            <pre id="videosOut"></pre>
+
+            <script>
+                async function loadVideos() {
+                    const result = await window.api.videos.list();
+                    document.getElementById("videosOut").textContent = JSON.stringify(result, null, 2);
+                }
+                document.getElementById("loadVideos")
+                    .addEventListener("click", loadVideos);
+            </script>
+
+        </div>
+
+    </body>
+</html>
