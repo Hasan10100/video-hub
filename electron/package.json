@@ -1,0 +1,22 @@
+{
+  "name": "electron",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electronmon ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "electron": "^40.0.0",
+    "form-data": "^4.0.5",
+    "mime-types": "^3.0.2",
+    "node-fetch": "^3.3.2",
+    "wait-on": "^9.0.3"
+  },
+  "devDependencies": {
+    "electronmon": "^2.0.4"
+  }
+}
