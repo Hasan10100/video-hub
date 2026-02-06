@@ -3,19 +3,20 @@ const { spawn } = require("child_process");
 const path = require("path");
 const waitOn = require("wait-on");
 const fs = require("fs");
-const mime = require("mime-types");
 const crypto = require("crypto");
 const { pathToFileURL } = require("url");
+require("dotenv").config();
 
 let backendProcess;
 let AUTH_TOKEN = null; // keeps JWT in main process memory
 
-const BACKEND_PORT = process.env.BACKEND_PORT || "5000";
+const BACKEND_PORT = process.env.BACKEND_PORT;
 const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
 const EXISTS_ENDPOINT = `${BACKEND_URL}/api/videos/exists`;
 const IMPORT_ENDPOINT = `${BACKEND_URL}/api/videos/import`;
 const UPLOAD_ENDPOINT = `${BACKEND_URL}/api/videos/upload`;
 const DELETE_ENDPOINT = `${BACKEND_URL}/api/videos/delete`;
+const PLAYLISTS_ENDPOINT = `${BACKEND_URL}/api/playlists`;
 
 
 function startBackend() {
@@ -44,7 +45,6 @@ function videosDir() {
 function makeId() {
     return crypto.randomBytes(16).toString("hex");
 }
-
 
 const fetch = (...args) =>
         import("node-fetch").then(({ default: fetch }) => fetch(...args));
@@ -89,6 +89,8 @@ ipcMain.handle("auth:logout", async () => {
     AUTH_TOKEN = null;
     return { ok: true, message : "Logged Out"};
 });
+
+//---------------------------------------------------------------------------------------
 
 ipcMain.handle("videos:import", async () => {
     if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
@@ -186,7 +188,6 @@ ipcMain.handle("videos:upload", async (_e, payload) => {
     return { ok: true, video: data.video };
 });
 
-
 ipcMain.handle("videos:delete", async (_e, videoId) => {
     if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
     if (!videoId) return { ok: false, message: "videoId is required" };
@@ -252,6 +253,93 @@ ipcMain.handle("videos:openExternal", async (_e, url) => {
     await shell.openExternal(url);
     return { ok: true };
 });
+
+//---------------------------------------------------------------------------------------
+
+ipcMain.handle("playlists:list", async () => {
+    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+
+    const res = await fetch(PLAYLISTS_ENDPOINT, {
+        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, status: res.status, message: data.message };
+
+    return { ok: true, playlists: data.playlists || [] };
+});
+
+ipcMain.handle("playlists:getlist", async (_e, { playlistId }) => {
+    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+    if (!playlistId) return { ok: false, message: "playlistId required" };
+
+    const res = await fetch(`${PLAYLISTS_ENDPOINT}/${playlistId}`, {
+        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, status: res.status, message: data.message };
+
+    return { ok: true, playlist: data.playlist };
+});
+
+ipcMain.handle("playlists:create", async (_e, {playlistName}) => {
+    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+
+    const modName = (playlistName || "").trim();
+    if (!modName) return { ok: false, message: "name required" };
+
+    const res = await fetch(PLAYLISTS_ENDPOINT, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${AUTH_TOKEN}`,
+        },
+        body: JSON.stringify({ name: modName }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, status: res.status, message: data.message };
+
+    return { ok: true, playlist: data.playlist };
+});
+
+ipcMain.handle("playlists:addItem", async (_e, { playlistId, videoId }) => {
+    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+    if (!playlistId || !videoId) return { ok: false, message: "playlistId and videoId required" };
+
+    const res = await fetch(`${PLAYLISTS_ENDPOINT}/${playlistId}/items`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${AUTH_TOKEN}`,
+        },
+        body: JSON.stringify({ videoId }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, status: res.status, message: data.message };
+
+    return { ok: true };
+});
+
+ipcMain.handle("playlists:removeItem", async (_e, { playlistId, videoId }) => {
+    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+    if (!playlistId || !videoId) return { ok: false, message: "playlistId and videoId required" };
+
+    const res = await fetch(`${PLAYLISTS_ENDPOINT}/${playlistId}/items/${videoId}`, {
+        method: "DELETE",
+        headers: {
+            Authorization: `Bearer ${AUTH_TOKEN}`,
+        },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, status: res.status, message: data.message };
+
+    return { ok: true };
+});
+
+//---------------------------------------------------------------------------------------
 
 async function createWindow() {
     const win = new BrowserWindow({
