@@ -5,6 +5,7 @@ const waitOn = require("wait-on");
 const fs = require("fs");
 const crypto = require("crypto");
 const { pathToFileURL } = require("url");
+require("dotenv").config();
 
 let backendProcess;
 let AUTH_TOKEN = null; // keeps JWT in main process memory
@@ -268,7 +269,7 @@ ipcMain.handle("playlists:list", async () => {
     return { ok: true, playlists: data.playlists || [] };
 });
 
-ipcMain.handle("playlists:getlist", async (_e, playlistId) => {
+ipcMain.handle("playlists:getlist", async (_e, { playlistId }) => {
     if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
     if (!playlistId) return { ok: false, message: "playlistId required" };
 
@@ -282,7 +283,7 @@ ipcMain.handle("playlists:getlist", async (_e, playlistId) => {
     return { ok: true, playlist: data.playlist };
 });
 
-ipcMain.handle("playlists:create", async (_e, playlistName) => {
+ipcMain.handle("playlists:create", async (_e, {playlistName}) => {
     if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
 
     const modName = (playlistName || "").trim();

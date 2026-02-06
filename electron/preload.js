@@ -18,9 +18,9 @@ contextBridge.exposeInMainWorld("api", {
     },
     playlists: {
         list: () => ipcRenderer.invoke("playlists:list"),
-        getlist: () => ipcRenderer.invoke("playlists:getlist", playlistId),
-        create: () => ipcRenderer.invoke("playlists:create", playlistName),
-        additem: () => ipcRenderer.invoke("playlists:addItem", playlistId, videoId),
-        removeitem: () => ipcRenderer.invoke("playlists:removeItem", playlistName, videoId),
+        getlist: (playlistId) => ipcRenderer.invoke("playlists:getlist", { playlistId }),
+        create: (playlistName) => ipcRenderer.invoke("playlists:create", { playlistName }),
+        additem: ({ playlistId, videoId }) => ipcRenderer.invoke("playlists:addItem", { playlistId, videoId }),
+        removeitem: ({ playlistId, videoId }) => ipcRenderer.invoke("playlists:removeItem", { playlistId, videoId }),
     }
 });
