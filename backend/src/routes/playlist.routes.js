@@ -8,5 +8,6 @@ router.get("/", requireAuth, playlistController.list);
 router.get("/:id", requireAuth, playlistController.getById);
 router.post("/:id/items", requireAuth, playlistController.addItem);
 router.delete("/:id/items/:videoId", requireAuth, playlistController.removeItem);
+router.delete("/:id", requireAuth, playlistController.deletePlaylist);
 
 module.exports = router;

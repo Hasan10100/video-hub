@@ -77,10 +77,20 @@ async function removeItem(userId, playlistId, videoId) {
     return { status: 200, body: { ok: true } };
 }
 
+async function deletePlaylist(userId, playlistId) {
+    const result = await Playlist.deleteOne({ _id: playlistId, ownerId: userId });
+    if (result.deletedCount === 0) {
+        return { status: 404, body: { message: "Playlist not found" } };
+    }
+    return { status: 200, body: { ok: true } };
+}
+
+
 module.exports = {
     createPlaylist,
     listPlaylists,
     getPlaylist,
     addItem,
-    removeItem
+    removeItem,
+    deletePlaylist
 };

@@ -45,10 +45,20 @@ async function removeItem(req, res) {
     }
 }
 
+async function deletePlaylist(req, res) {
+    try {
+        const result = await playlistService.deletePlaylist(req.userId, req.params.id);
+        return res.status(result.status).json(result.body);
+    } catch (err) {
+        return res.status(500).json({ message: err.message || "Server error" });
+    }
+}
+
 module.exports = {
     create,
     list,
     getById,
     addItem,
-    removeItem
+    removeItem,
+    deletePlaylist
 };

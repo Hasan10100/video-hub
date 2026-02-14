@@ -54,6 +54,33 @@ ipcMain.handle("api:health", async () => {
     return res.json();
 });
 
+ipcMain.handle("auth:register", async (_event, { name, email, password }) => {
+    const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, password }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+        // Send a clean error back to renderer
+        return { ok: false, message: data.message || "User creation failed", status: res.status };
+    }
+
+    // Adjust these keys to match your backend response!
+    // Common: data.token OR data.accessToken
+    const token = data.token;
+
+    if (!token) {
+        return { ok: false, message: "No token returned by server" };
+    }
+
+    AUTH_TOKEN = token;
+
+    return { ok: true, message: "Logged in", user: data.user || null };
+});
+
 ipcMain.handle("auth:login", async (_event, { email, password }) => {
     const res = await fetch(`${BACKEND_URL}/api/auth/login`, {
         method: "POST",
@@ -269,7 +296,7 @@ ipcMain.handle("playlists:list", async () => {
     return { ok: true, playlists: data.playlists || [] };
 });
 
-ipcMain.handle("playlists:getlist", async (_e, { playlistId }) => {
+ipcMain.handle("playlists:getList", async (_e, { playlistId }) => {
     if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
     if (!playlistId) return { ok: false, message: "playlistId required" };
 
@@ -339,6 +366,20 @@ ipcMain.handle("playlists:removeItem", async (_e, { playlistId, videoId }) => {
     return { ok: true };
 });
 
+ipcMain.handle("playlists:deletePlaylist", async (_e, { playlistId }) => {
+    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+    if (!playlistId) return { ok: false, message: "playlistId required" };
+
+    const res = await fetch(`${PLAYLISTS_ENDPOINT}/${playlistId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, status: res.status, message: data.message };
+
+    return { ok: true};
+});
 //---------------------------------------------------------------------------------------
 
 async function createWindow() {

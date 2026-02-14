@@ -3,14 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <title>Video Hub</title>
-    <style>
-        body { font-family: system-ui, sans-serif; padding: 24px; }
-        .card { border: 1px solid #444; border-radius: 10px; padding: 16px; max-width: 900px; }
-        pre { background: #1df30d; padding: 12px; border-radius: 8px; overflow: auto; }
-        button { padding: 8px 12px; border-radius: 6px; border: 1px solid #666; background: #222; color: #fff; cursor: pointer; }
-        input, select { padding: 6px; }
-        ul { padding-left: 20px; }
-    </style>
+    <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
@@ -18,288 +11,624 @@
 
     <div class="card">
 
-    <!-- ================= Backend Health ================= -->
+        <!-- ================= SCREEN: LOGIN ================= -->
+        <div id="screenLogin">
+            <h3>Login</h3>
 
-    <p><b>Status:</b> <span id="status">Checking backend...</span></p>
-    <button id="btn">Ping /api/health</button>
-    <pre id="out"></pre>
+            <input id="email" placeholder="email" value="admin@test.com" style="width:320px;" />
+            <br /><br />
+            <input id="password" type="password" placeholder="password" value="password123" style="width:320px;" />
+            <br /><br />
+
+            <button id="loginBtn">Login</button>
+
+            <h3>Register</h3>
+
+            <input id="name" placeholder="name" style="width:320px;" />
+            <br /><br />
+            <input id="emailRe" placeholder="email" style="width:320px;" />
+            <br /><br />
+            <input id="passwordRe" type="password" placeholder="password" style="width:320px;" />
+            <br /><br />
+
+            <button id="registerBtn">Register</button>
+
+            <pre id="authOut"></pre>
+        </div>
+
+        <!-- ================= SCREEN: HOME (LIBRARY) ================= -->
+        <div id="screenHome" style="display:none;">
+
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                <h3 style="margin:0;">Library</h3>
+                <button id="logoutBtn">Logout</button>
+            </div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0;">
+                <button id="tileAll">All Videos</button>
+                <button id="tileLocal">Local</button>
+                <button id="tileExternal">External</button>
+            </div>
+
+            <button id="refreshBtn">Refresh Library</button>
+
+            <div class="panel" style="margin-top:10px;">
+                <h4>Player</h4>
+                <div id="libNowPlaying" class="sub"></div>
+                <video id="libPlayer" controls style="width:100%; max-width:720px; margin-top:10px;"></video>
+            </div>
+
+            <ul id="videoList"></ul>
+
+            <hr />
+
+            <h3>Playlists</h3>
+            <input id="plName" placeholder="New playlist name" />
+            <button id="plCreateBtn">Create</button>
+            <button id="plRefreshBtn">Refresh</button>
+
+            <h4 style="margin-top:10px;">Playlist Tiles</h4>
+            <ul id="plList"></ul>
+        </div>
+
+        <!-- ================= SCREEN: PLAYLIST VIEW ================= -->
+        <div id="screenPlaylist" style="display:none;">
+
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                <button id="backHomeBtn">← Back to Library</button>
+                <button id="logoutBtn2">Logout</button>
+            </div>
+
+            <h3 style="margin-top:10px;">Playlist: <span id="plTitle">None</span></h3>
+
+            <div class="panel" style="margin-top:10px;">
+                <h4>Add External Video</h4>
+                <input id="extTitle" placeholder="Title" style="width:320px;" />
+                <br /><br />
+                <input id="extUrl" placeholder="https://..." style="width:320px;" />
+                <br /><br />
+                <button id="addExternalBtn">Add External</button>
+                <pre id="externalOut"></pre>
+            </div>
+
+            <div class="panel" style="margin-top:10px;">
+                <h4>Import Local Video</h4>
+                <button id="importBtn">Import Video</button>
+                <pre id="importOut"></pre>
+            </div>
+
+            <div class="panel" style="margin-top:10px;">
+                <button id="toggleAddFromLibrary" style="margin-bottom:8px;">
+                    Add from Library
+                </button>
+
+                <div id="addFromLibraryPanel" style="display:none;">
+                    <input id="libSearch" placeholder="Search library..." style="width:100%; margin-bottom:8px;" />
+                    <ul id="libAddList"></ul>
+                </div>
+            </div>
+
+            <video id="player" controls style="width:100%; max-width:720px; margin-top:10px;"></video>
+
+            <div class="panel" style="margin-top:10px;">
+                <h4>Playlist Items</h4>
+                <ul id="plItems"></ul>
+            </div>
+
+        </div>
+    </div>
 
     <script>
-        async function ping() {
+        // ------------------ App State ------------------
+        let isAuthenticated = false;
+        let currentPlaylistId = null;
+        let currentFilter = "all"; // all | local | external
+        window._videosCache = [];
+
+        // Avoid overlapping playlist refreshes (prevents short "stuck" UI)
+        let _refreshPlaylistsInFlight = false;
+
+        // ------------------ Screen Router ------------------
+        function showScreen(name) {
+            document.getElementById("screenLogin").style.display = (name === "login") ? "" : "none";
+            document.getElementById("screenHome").style.display = (name === "home") ? "" : "none";
+            document.getElementById("screenPlaylist").style.display = (name === "playlist") ? "" : "none";
+        }
+
+        // ------------------ Helpers: Players ------------------
+        function resetLibraryPlayer() {
+            if (!libPlayer) return;
+
             try {
-                document.getElementById("status").textContent = "Loading...";
-                const data = await window.api.getHealth();
-                document.getElementById("status").textContent = "Backend OK ✅";
-                document.getElementById("out").textContent = JSON.stringify(data, null, 2);
-            } catch (e) {
-                document.getElementById("status").textContent = "Backend NOT reachable ❌";
-                document.getElementById("out").textContent = String(e);
+                libPlayer.pause();
+            } catch {}
+
+            libPlayer.removeAttribute("src");
+            libPlayer.load();
+            libNowPlaying.textContent = "";
+        }
+
+        function resetPlaylistPlayer() {
+            if (!player) return;
+
+            try {
+                player.pause();
+            } catch {}
+
+            player.removeAttribute("src");
+            player.load();
+        }
+
+        function resetAddFromLibraryUI() {
+            if (libSearch) {
+                libSearch.value = "";
+            }
+
+            if (typeof renderAddFromLibraryList === "function") {
+                renderAddFromLibraryList("");
+            }
+
+            const panel = document.getElementById("addFromLibraryPanel");
+            const btn = document.getElementById("toggleAddFromLibrary");
+
+            if (panel) panel.style.display = "none";
+            if (btn) btn.textContent = "Add from Library";
+        }
+
+        function setAuthenticatedUI(isAuthed) {
+            isAuthenticated = isAuthed;
+
+            if (!isAuthed) {
+                currentPlaylistId = null;
+                window._videosCache = [];
+
+                resetPlaylistPlayer();
+                resetLibraryPlayer();
+                resetAddFromLibraryUI();
+
+                if (videoList) videoList.innerHTML = "";
+                if (plList) plList.innerHTML = "";
+                if (plItems) plItems.innerHTML = "";
+                if (plTitle) plTitle.textContent = "None";
+
+                showScreen("login");
             }
         }
-        document.getElementById("btn").addEventListener("click", ping);
-        ping();
-    </script>
 
-    <hr />
-
-    <!-- ================= Login ================= -->
-
-    <h3>Login</h3>
-
-    <input id="email" placeholder="email" value="admin@test.com" style="width:320px;" />
-    <br /><br />
-    <input id="password" type="password" placeholder="password" value="password123" style="width:320px;" />
-    <br /><br />
-    <button id="loginBtn">Login</button>
-    <button id="logoutBtn">Logout</button>
-    <button id="statusBtn">Auth Status</button>
-
-    <pre id="authOut"></pre>
-
-    <script>
-        async function login() {
-            const email = emailEl.value;
-            const password = passwordEl.value;
-            const r = await window.api.auth.login({ email, password });
-            authOut.textContent = JSON.stringify(r, null, 2);
+        function isDirectMediaUrl(url) {
+            try {
+                return /\.(mp4|webm|ogg)$/i.test(new URL(url).pathname);
+            } catch {
+                return false;
+            }
         }
 
-        async function logout() {
-            const r = await window.api.auth.logout();
-            authOut.textContent = JSON.stringify(r, null, 2);
+        function applyLibraryFilter(videos) {
+            if (currentFilter === "local") return videos.filter(v => v.sourceType === "local");
+            if (currentFilter === "external") return videos.filter(v => v.sourceType === "external");
+            return videos;
         }
 
-        async function showStatus() {
-            const r = await window.api.auth.status();
-            authOut.textContent = JSON.stringify(r, null, 2);
+        function getNewVideoId(r) {
+            return r?.video?._id || null;
         }
+
+        // ------------------ DOM refs ------------------
+        const nameRe = document.getElementById("name");
+        const emailRe = document.getElementById("emailRe");
+        const passwordRe = document.getElementById("passwordRe");
 
         const emailEl = document.getElementById("email");
         const passwordEl = document.getElementById("password");
         const authOut = document.getElementById("authOut");
 
-        document.getElementById("loginBtn").onclick = login;
-        document.getElementById("logoutBtn").onclick = logout;
-        document.getElementById("statusBtn").onclick = showStatus;
-        showStatus();
-    </script>
+        const videoList = document.getElementById("videoList");
+        const plList = document.getElementById("plList");
+        const plItems = document.getElementById("plItems");
+        const plTitle = document.getElementById("plTitle");
 
-    <hr />
+        const libPlayer = document.getElementById("libPlayer");
+        const libNowPlaying = document.getElementById("libNowPlaying");
+        const player = document.getElementById("player");
 
-    <!-- ================= External Video ================= -->
+        const libSearch = document.getElementById("libSearch");
+        const libAddList = document.getElementById("libAddList");
 
-    <h3>Add External Video</h3>
+        // ------------------ Auth ------------------
+        async function register() {
+            const r = await window.api.auth.register({
+                name: nameRe.value,
+                email: emailRe.value,
+                password: passwordRe.value
+            });
 
-    <input id="extTitle" placeholder="Title" style="width:320px;" />
-    <br /><br />
-    <input id="extUrl" placeholder="https://..." style="width:320px;" />
-    <br /><br />
-    <button id="addExternalBtn">Add External</button>
-    <pre id="externalOut"></pre>
+            if (r.ok) {
+                setAuthenticatedUI(true);
+                nameRe.value = "";
+                emailRe.value = "";
+                passwordRe.value = "";
+                showScreen("home");
+                await refreshLibrary();
+                await refreshPlaylists();
+            } else {
+                if (authOut) authOut.textContent = JSON.stringify(r, null, 2);
+            }
+        }
 
-    <script>
-        async function upload() {
+        async function login() {
+            const r = await window.api.auth.login({
+                email: emailEl.value,
+                password: passwordEl.value
+            });
+
+            if (r.ok) {
+                setAuthenticatedUI(true);
+                showScreen("home");
+                await refreshLibrary();
+                await refreshPlaylists();
+            } else {
+                if (authOut) authOut.textContent = JSON.stringify(r, null, 2);
+            }
+        }
+
+        async function logout() {
+            await window.api.auth.logout();
+            setAuthenticatedUI(false);
+        }
+
+        // ------------------ Library ------------------
+        function renderLibraryList(videos) {
+            videoList.innerHTML = "";
+
+            for (const v of videos) {
+                const li = document.createElement("li");
+
+                const label = document.createElement("span");
+                label.textContent = v.sourceType === "external" ? `${v.title} (external)` : v.title;
+                label.style.cursor = "pointer";
+
+                label.onclick = async () => {
+                    resetPlaylistPlayer();
+
+                    libNowPlaying.textContent = `Now playing: ${v.title}`;
+
+                    if (v.sourceType === "local") {
+                        if (!v.fileUrl) return alert("Missing fileUrl. Refresh library.");
+                        libPlayer.src = v.fileUrl;
+                        try { await libPlayer.play(); } catch {}
+                        return;
+                    }
+
+                    if (isDirectMediaUrl(v.externalUrl)) {
+                        libPlayer.src = v.externalUrl;
+                        try { await libPlayer.play(); } catch {}
+                    } else {
+                        await window.api.videos.openExternal(v.externalUrl);
+                        libNowPlaying.textContent = `Opened externally: ${v.title}`;
+                    }
+                };
+
+                const del = document.createElement("button");
+                del.textContent = "Delete";
+                del.style.marginLeft = "10px";
+
+                del.onclick = async () => {
+                    if (!confirm(`Delete "${v.title}"?`)) return;
+                    await window.api.videos.delete(v._id);
+                    await refreshLibrary();
+                    if (currentPlaylistId) await loadPlaylist(currentPlaylistId);
+                };
+
+                li.append(label, del);
+                videoList.appendChild(li);
+            }
+        }
+
+        async function refreshLibrary() {
+            if (!isAuthenticated) return;
+
+            const r = await window.api.videos.list();
+            if (!r.ok) {
+                videoList.innerHTML = `<li>${r.message || "Failed to load videos"}</li>`;
+                return;
+            }
+
+            window._videosCache = r.videos;
+
+            const filtered = applyLibraryFilter(r.videos);
+            renderLibraryList(filtered);
+
+            if (currentPlaylistId) {
+                renderAddFromLibraryList(libSearch ? libSearch.value.toLowerCase() : "");
+            }
+        }
+
+        // ------------------ Playlists ------------------
+        async function refreshPlaylists() {
+            if (!isAuthenticated) return;
+            if (_refreshPlaylistsInFlight) return;
+
+            _refreshPlaylistsInFlight = true;
+
+            try {
+                const r = await window.api.playlists.list();
+
+                // Guard again after await (state can change while waiting)
+                if (!isAuthenticated) return;
+
+                plList.innerHTML = "";
+                if (!r.ok) return;
+
+                for (const p of r.playlists) {
+                    const li = document.createElement("li");
+                    li.style.display = "flex";
+                    li.style.justifyContent = "space-between";
+                    li.style.alignItems = "center";
+
+                    // Playlist name (clickable)
+                    const label = document.createElement("span");
+                    label.textContent = p.name;
+                    label.style.cursor = "pointer";
+
+                    label.onclick = async () => {
+                        await loadPlaylist(p._id);
+                        showScreen("playlist");
+                    };
+
+                    // Delete button
+                    const del = document.createElement("button");
+                    del.textContent = "Delete";
+                    del.style.marginLeft = "10px";
+
+                    del.onclick = async (e) => {
+                        e.stopPropagation();
+                        <!-- if (!confirm(`Delete playlist "${p.name}"?`)) return; -->
+
+                        // Disable button to prevent double clicks
+                        del.disabled = true;
+
+                        // Optimistic UI: remove the tile immediately to avoid UI "stuck"
+                        li.remove();
+
+                        const playlistId = String(p._id);
+                        const result = await window.api.playlists.deleteplaylist(playlistId);
+
+                        if (!result.ok) {
+                            alert(result.message || "Failed to delete playlist");
+                            // If delete failed, reload list from server
+                            await refreshPlaylists();
+                            return;
+                        }
+
+                        if (currentPlaylistId === playlistId) {
+                            currentPlaylistId = null;
+                            showScreen("home");
+                        }
+
+                        // No need to refresh if optimistic removal succeeded,
+                        // but you can refresh to ensure server is in sync.
+                        // await refreshPlaylists();
+                    };
+
+                    li.append(label, del);
+                    plList.appendChild(li);
+                }
+            } finally {
+                _refreshPlaylistsInFlight = false;
+            }
+        }
+
+        async function loadPlaylist(id) {
+            if (!isAuthenticated) return;
+
+            resetPlaylistPlayer();
+            resetLibraryPlayer();
+            resetAddFromLibraryUI();
+
+            currentPlaylistId = id;
+
+            const r = await window.api.playlists.getlist(id);
+            if (!r.ok) return;
+
+            plTitle.textContent = r.playlist.name;
+            plItems.innerHTML = "";
+
+            for (const v of r.playlist.videoIds) {
+                const li = document.createElement("li");
+                li.dataset.videoId = v._id;
+
+                const label = document.createElement("span");
+                label.textContent = `${v.title} (${v.sourceType})`;
+                label.style.cursor = "pointer";
+
+                label.onclick = async () => {
+                    resetLibraryPlayer();
+
+                    if (v.sourceType === "local") {
+                        const m = window._videosCache.find(x => x._id === v._id);
+                        if (m?.fileUrl) player.src = m.fileUrl;
+                    } else {
+                        await window.api.videos.openExternal(v.externalUrl);
+                    }
+                };
+
+                const rm = document.createElement("button");
+                rm.textContent = "Remove";
+                rm.style.marginLeft = "10px";
+
+                rm.onclick = async () => {
+                    await window.api.playlists.removeitem({ playlistId: id, videoId: v._id });
+                    await loadPlaylist(id);
+                };
+
+                li.append(label, rm);
+                plItems.appendChild(li);
+            }
+
+            renderAddFromLibraryList("");
+        }
+
+        // ------------------ Add From Library Panel ------------------
+        function renderAddFromLibraryList(filterText = "") {
+            if (!libAddList) return;
+
+            libAddList.innerHTML = "";
+
+            const playlistVideoIds = new Set(
+                Array.from(plItems.children).map(li => li.dataset.videoId)
+            );
+
+            for (const v of window._videosCache) {
+                if (filterText && !v.title.toLowerCase().includes(filterText)) continue;
+
+                const li = document.createElement("li");
+                li.style.display = "flex";
+                li.style.justifyContent = "space-between";
+                li.style.alignItems = "center";
+
+                const label = document.createElement("span");
+                label.textContent = `${v.title} (${v.sourceType})`;
+
+                const btn = document.createElement("button");
+
+                if (playlistVideoIds.has(v._id)) {
+                    btn.textContent = "Added";
+                    btn.disabled = true;
+                } else {
+                    btn.textContent = "Add";
+                    btn.onclick = async () => {
+                        await window.api.playlists.additem({
+                            playlistId: currentPlaylistId,
+                            videoId: v._id
+                        });
+
+                        await loadPlaylist(currentPlaylistId);
+                        renderAddFromLibraryList(libSearch ? libSearch.value.toLowerCase() : "");
+                    };
+                }
+
+                li.append(label, btn);
+                libAddList.appendChild(li);
+            }
+        }
+
+        // ------------------ Upload / Import (auto-add to playlist) ------------------
+        async function uploadExternal() {
+            if (!currentPlaylistId) return alert("Open a playlist first.");
+
             const title = extTitle.value.trim();
             const externalUrl = extUrl.value.trim();
             if (!title || !externalUrl) return alert("Title and URL required");
 
             const r = await window.api.videos.upload({ title, externalUrl });
             externalOut.textContent = JSON.stringify(r, null, 2);
+            if (!r.ok) return;
 
-            if (r.ok) {
-                extTitle.value = "";
-                extUrl.value = "";
-                refreshLibrary();
-            }
+            const newVideoId = getNewVideoId(r);
+            if (!newVideoId) return alert("Missing video._id in response.");
+
+            await refreshLibrary();
+            await window.api.playlists.additem({ playlistId: currentPlaylistId, videoId: newVideoId });
+            await loadPlaylist(currentPlaylistId);
+
+            extTitle.value = "";
+            extUrl.value = "";
         }
-        addExternalBtn.onclick = upload;
-    </script>
 
-    <hr />
+        async function importLocal() {
+            if (!currentPlaylistId) return alert("Open a playlist first.");
 
-    <!-- ================= Local Import ================= -->
-
-    <button id="importBtn">Import Video</button>
-    <pre id="importOut"></pre>
-
-    <video id="player" controls style="width:100%; max-width:720px; margin-top:10px;"></video>
-
-    <script>
-        async function localImport() {
             const r = await window.api.videos.import();
             importOut.textContent = JSON.stringify(r, null, 2);
-            if (r.ok && r.fileUrl) player.src = r.fileUrl;
-        }
-        importBtn.onclick = localImport;
-    </script>
-
-    <hr />
-
-    <!-- ================= Library ================= -->
-
-    <button id="refreshBtn">Refresh Library</button>
-    <ul id="videoList"></ul>
-
-    <script>
-        window._videosCache = [];
-
-        function isDirectMediaUrl(url) {
-            try {
-                return /\.(mp4|webm|ogg)$/i.test(new URL(url).pathname);
-            } catch { return false; }
-        }
-
-        async function refreshLibrary() {
-            const r = await window.api.videos.list();
-            videoList.innerHTML = "";
-
-            if (!r.ok) return videoList.innerHTML = `<li>${r.message}</li>`;
-
-            window._videosCache = r.videos;
-            if (typeof refreshVideoSelect === "function") refreshVideoSelect();
-
-            for (const v of r.videos) {
-                const li = document.createElement("li");
-                const label = document.createElement("span");
-                label.textContent = v.sourceType === "external" ? `${v.title} (external)` : v.title;
-                label.style.cursor = "pointer";
-
-                label.onclick = async () => {
-                    if (v.sourceType === "local") player.src = v.fileUrl;
-                    else if (isDirectMediaUrl(v.externalUrl)) player.src = v.externalUrl;
-                    else await window.api.shell.openExternal(v.externalUrl);
-                };
-
-                const del = document.createElement("button");
-                del.textContent = "Delete";
-                del.style.marginLeft = "10px";
-                del.onclick = async () => {
-                    if (!confirm(`Delete "${v.title}"?`)) return;
-                    await window.api.videos.delete(v._id);
-                    refreshLibrary();
-                };
-                li.append(label, del);
-                videoList.appendChild(li);
-            }
-        }
-
-        refreshBtn.onclick = refreshLibrary;
-        refreshLibrary();
-    </script>
-
-    <hr />
-
-    <!-- ================= Playlists ================= -->
-
-    <h3>Playlists</h3>
-
-    <input id="plName" placeholder="New playlist name" />
-    <button id="plCreateBtn">Create</button>
-    <button id="plRefreshBtn">Refresh</button>
-
-    <div style="display:flex; gap:30px; margin-top:12px;">
-
-    <div>
-        <h4>All Playlists</h4>
-        <ul id="plList"></ul>
-    </div>
-
-    <div>
-        <h4>Selected Playlist</h4>
-        <b id="plSelectedName">None</b>
-        <br /><br />
-        <select id="videoSelect"></select>
-        <button id="plAddVideoBtn">Add Video</button>
-        <ul id="plItems"></ul>
-    </div>
-
-    </div>
-
-    <script>
-        let currentPlaylistId = null;
-
-        function refreshVideoSelect() {
-            videoSelect.innerHTML = "";
-            for (const v of window._videosCache) {
-                const opt = document.createElement("option");
-                opt.value = v._id;
-                opt.textContent = `${v.title} (${v.sourceType})`;
-                videoSelect.appendChild(opt);
-            }
-        }
-
-        async function refreshPlaylists() {
-            const r = await window.api.playlists.list();
-            plList.innerHTML = "";
             if (!r.ok) return;
 
-            for (const p of r.playlists) {
-                const li = document.createElement("li");
-                li.textContent = p.name;
-                li.style.cursor = "pointer";
-                li.onclick = () => loadPlaylist(p._id);
-                plList.appendChild(li);
-            }
+            const newVideoId = getNewVideoId(r);
+            if (!newVideoId) return alert("Missing video._id in response.");
+
+            await refreshLibrary();
+            await window.api.playlists.additem({ playlistId: currentPlaylistId, videoId: newVideoId });
+            await loadPlaylist(currentPlaylistId);
+
+            const v = window._videosCache.find(x => x._id === newVideoId);
+            if (v?.fileUrl) player.src = v.fileUrl;
         }
 
-        async function loadPlaylist(id) {
-            currentPlaylistId = id;
-            const r = await window.api.playlists.getlist(id);
-            if (!r.ok) return;
+        // ------------------ Wire up events ------------------
+        document.getElementById("registerBtn").onclick = register;
+        document.getElementById("loginBtn").onclick = login;
 
-            plSelectedName.textContent = r.playlist.name;
-            plItems.innerHTML = "";
+        document.getElementById("logoutBtn").onclick = logout;
+        document.getElementById("logoutBtn2").onclick = logout;
 
-            for (const v of r.playlist.videoIds) {
-                const li = document.createElement("li");
-                const label = document.createElement("span");
-                label.textContent = `${v.title} (${v.sourceType})`;
-                label.style.cursor = "pointer";
+        document.getElementById("refreshBtn").onclick = refreshLibrary;
 
-                label.onclick = async () => {
-                if (v.sourceType === "local") {
-                    const m = window._videosCache.find(x => x._id === v._id);
-                    if (m?.fileUrl) player.src = m.fileUrl;
-                } else {
-                    await window.api.shell.openExternal(v.externalUrl);
-                }
-                };
+        document.getElementById("tileAll").onclick = async () => {
+            currentFilter = "all";
+            await refreshLibrary();
+        };
 
-                const rm = document.createElement("button");
-                rm.textContent = "Remove";
-                rm.style.marginLeft = "10px";
-                rm.onclick = async () => {
-                await window.api.playlists.removeitem({ playlistId: id, videoId: v._id });
-                loadPlaylist(id);
-                };
+        document.getElementById("tileLocal").onclick = async () => {
+            currentFilter = "local";
+            await refreshLibrary();
+        };
 
-                li.append(label, rm);
-                plItems.appendChild(li);
-            }
-        }
+        document.getElementById("tileExternal").onclick = async () => {
+            currentFilter = "external";
+            await refreshLibrary();
+        };
 
-        plCreateBtn.onclick = async () => {
+        document.getElementById("plCreateBtn").onclick = async () => {
             if (!plName.value.trim()) return;
-            await window.api.playlists.create(plName.value.trim());
-            plName.value = "";
-            refreshPlaylists();
+
+            // Simple UI safety: prevent double create clicks
+            const btn = document.getElementById("plCreateBtn");
+            btn.disabled = true;
+
+            try {
+                await window.api.playlists.create(plName.value.trim());
+                plName.value = "";
+                await refreshPlaylists();
+            } finally {
+                btn.disabled = false;
+            }
         };
 
-        plRefreshBtn.onclick = refreshPlaylists;
+        document.getElementById("plRefreshBtn").onclick = refreshPlaylists;
 
-        plAddVideoBtn.onclick = async () => {
-        if (!currentPlaylistId) return alert("Select playlist first");
-        await window.api.playlists.additem({
-            playlistId: currentPlaylistId,
-            videoId: videoSelect.value
-        });
-        loadPlaylist(currentPlaylistId);
+        document.getElementById("addExternalBtn").onclick = uploadExternal;
+        document.getElementById("importBtn").onclick = importLocal;
+
+        document.getElementById("backHomeBtn").onclick = () => {
+            resetPlaylistPlayer();
+            resetLibraryPlayer();
+            resetAddFromLibraryUI();
+            currentPlaylistId = null;
+            showScreen("home");
         };
 
-        refreshPlaylists();
+        document.getElementById("toggleAddFromLibrary").onclick = () => {
+            const panel = document.getElementById("addFromLibraryPanel");
+            const btn = document.getElementById("toggleAddFromLibrary");
+
+            const isHidden = panel.style.display === "none";
+
+            panel.style.display = isHidden ? "" : "none";
+            btn.textContent = isHidden ? "Hide Library" : "Add from Library";
+
+            if (isHidden) {
+                renderAddFromLibraryList(libSearch ? libSearch.value.toLowerCase() : "");
+            }
+        };
+
+        if (libSearch) {
+            libSearch.oninput = () => {
+                renderAddFromLibraryList(libSearch.value.toLowerCase());
+            };
+        }
+
+        // ------------------ Boot ------------------
+        showScreen("login");
     </script>
-
-    </div>
 
 </body>
 </html>
