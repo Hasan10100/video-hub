@@ -5,12 +5,12 @@ const waitOn = require("wait-on");
 const fs = require("fs");
 const crypto = require("crypto");
 const { pathToFileURL } = require("url");
-require("dotenv").config();
+require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env") });
 
 let backendProcess;
 let AUTH_TOKEN = null; // keeps JWT in main process memory
 
-const BACKEND_PORT = process.env.BACKEND_PORT;
+const BACKEND_PORT = process.env.BACKEND_PORT || 5000;
 const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
 const EXISTS_ENDPOINT = `${BACKEND_URL}/api/videos/exists`;
 const IMPORT_ENDPOINT = `${BACKEND_URL}/api/videos/import`;
@@ -394,17 +394,24 @@ async function createWindow() {
         }
     });
 
-    // Wait until backend responds
     try {
         await waitOn({
             resources: [`${BACKEND_URL}/api/health`],
-            timeout: 30_000,   // 30 seconds max
-            interval: 250,     // check every 250ms
-            // This is optional but helpful (accepts non-200 if server responds)
+            timeout: 30_000,
+            interval: 250,
+            // accepts non-200 if server responds
             validateStatus: (status) => status >= 200 && status < 500,
         });
+        const devUrl = process.env.VITE_DEV_SERVER_URL;
 
-        await win.loadFile(path.join(__dirname,"renderer","index.html"));
+        if (devUrl) {
+            // Dev: Vite server
+            await win.loadURL(devUrl);
+        } else {
+            // Prod: built files
+            await win.loadFile(path.join(__dirname, "..", "renderer", "dist", "index.html"));
+        }
+
     } catch (err) {
         // If backend never became ready, show a simple error page
         await win.loadURL("data:text/html," + encodeURIComponent(
