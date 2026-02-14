@@ -1,4 +1,7 @@
 const mongoose = require("mongoose");
+const path = require("path");
+
+require("dotenv").config({ path: path.join(__dirname, "..", "..", "..", ".env") });
 
 async function connectDB() {
     const uri = process.env.MONGO_URI;
