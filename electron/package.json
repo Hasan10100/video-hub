@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "electronmon ."
   },
+  "type": "module",
   "keywords": [],
   "author": "",
   "license": "ISC",

@@ -1,433 +1,419 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
-const { spawn } = require("child_process");
-const path = require("path");
-const waitOn = require("wait-on");
-const fs = require("fs");
-const crypto = require("crypto");
-const { pathToFileURL } = require("url");
-require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env") });
+// PURE DESKTOP: No backend, no JWT.
+// Data stored locally in SQLite. Local videos stored under userData/videos.
 
-let backendProcess;
-let AUTH_TOKEN = null; // keeps JWT in main process memory
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol } from "electron";
+import { join, basename, extname } from "path";
+import { mkdirSync, createReadStream, existsSync, promises } from "fs";
+import { randomBytes, createHash } from "crypto";
+import { pathToFileURL } from "url";
+import { fileURLToPath } from "url";
+import path from "path";
 
-const BACKEND_PORT = process.env.BACKEND_PORT || 5000;
-const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
-const EXISTS_ENDPOINT = `${BACKEND_URL}/api/videos/exists`;
-const IMPORT_ENDPOINT = `${BACKEND_URL}/api/videos/import`;
-const UPLOAD_ENDPOINT = `${BACKEND_URL}/api/videos/upload`;
-const DELETE_ENDPOINT = `${BACKEND_URL}/api/videos/delete`;
-const PLAYLISTS_ENDPOINT = `${BACKEND_URL}/api/playlists`;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
+import { getDb } from "./db.js";
 
-function startBackend() {
-    const backendEntry = path.join(__dirname, "..", "backend", "src", "server.js");
-
-    backendProcess = spawn(process.execPath, [backendEntry], {
-        stdio: "inherit",
-        env: {
-        ...process.env,
-        PORT: BACKEND_PORT,
-        },
-        windowsHide: true,
-    });
-
-    backendProcess.on("exit", (code) => {
-        console.log("Backend exited with code:", code);
-    });
-}
+// ------------------------- Helpers -------------------------
 
 function videosDir() {
-    const dir = path.join(app.getPath("userData"), "videos");
-    fs.mkdirSync(dir, { recursive: true });
+    const dir = join(app.getPath("userData"), "videos");
+    mkdirSync(dir, { recursive: true });
     return dir;
 }
 
 function makeId() {
-    return crypto.randomBytes(16).toString("hex");
+    return randomBytes(16).toString("hex");
 }
 
-const fetch = (...args) =>
-        import("node-fetch").then(({ default: fetch }) => fetch(...args));
+function isHttpUrl(str) {
+    try {
+        const u = new URL(str);
+        return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+        return false;
+    }
+}
 
-ipcMain.handle("api:health", async () => {
-    const res = await fetch("http://localhost:5000/api/health");
-    return res.json();
-});
+// Stream-hash (does NOT load entire file into RAM)
+function sha256File(filePath) {
+    return new Promise((resolve, reject) => {
+        const hash = createHash("sha256");
+        const stream = createReadStream(filePath);
 
-ipcMain.handle("auth:register", async (_event, { name, email, password }) => {
-    const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
+        stream.on("data", (chunk) => hash.update(chunk));
+        stream.on("error", reject);
+        stream.on("end", () => resolve(hash.digest("hex")));
     });
+}
 
-    const data = await res.json().catch(() => ({}));
+// Normalize DB video row for UI
+function mapVideoRow(row) {
+    if (!row) return null;
 
-    if (!res.ok) {
-        // Send a clean error back to renderer
-        return { ok: false, message: data.message || "User creation failed", status: res.status };
+    let fileUrl = null;
+    let missing = false;
+
+    if (row.source_type === "local" && row.filename) {
+        const localPath = join(videosDir(), row.filename);
+        const exists = existsSync(localPath);
+        missing = !exists;
+        // fileUrl = exists ? pathToFileURL(localPath).href : null
+        fileUrl = exists ? `video://local/${row.id}` : null;;
     }
 
-    // Adjust these keys to match your backend response!
-    // Common: data.token OR data.accessToken
-    const token = data.token;
+    return {
+        id: row.id,
+        title: row.title,
+        sourceType: row.source_type,
+        filename: row.filename,
+        contentHash: row.content_hash,
+        externalUrl: row.external_url,
+        provider: row.provider,
+        createdAt: row.created_at,
+        fileUrl,
+        missing
+    };
+}
 
-    if (!token) {
-        return { ok: false, message: "No token returned by server" };
+ipcMain.handle("api:health", async () => ({ ok: true, mode: "desktop-only" }));
+
+// ------------------------- IPC: Videos -------------------------
+
+// List videos (optional filters)
+ipcMain.handle("videos:list", async (_event, args) => {
+    const db = getDb();
+    const type = args?.type; // "all" | "local" | "external"
+    const q = (args?.q ?? "").trim();
+
+    let rows;
+
+    if (type && type !== "all") {
+        if (q) {
+            rows = db.prepare(`
+                SELECT * FROM videos
+                WHERE source_type = ?
+                    AND title LIKE ?
+                ORDER BY id DESC
+            `).all(type, `%${q}%`);
+        } else {
+            rows = db.prepare(`
+                SELECT * FROM videos
+                WHERE source_type = ?
+                ORDER BY id DESC
+            `).all(type);
+        }
+    } else {
+        if (q) {
+            rows = db.prepare(`
+                SELECT * FROM videos
+                WHERE title LIKE ?
+                ORDER BY id DESC
+            `).all(`%${q}%`);
+        } else {
+            rows = db.prepare(`
+                SELECT * FROM videos
+                ORDER BY id DESC
+            `).all();
+        }
     }
 
-    AUTH_TOKEN = token;
-
-    return { ok: true, message: "Logged in", user: data.user || null };
+    return { ok: true, items: rows.map(mapVideoRow) };
 });
 
-ipcMain.handle("auth:login", async (_event, { email, password }) => {
-    const res = await fetch(`${BACKEND_URL}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-    });
-
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-        // Send a clean error back to renderer
-        return { ok: false, message: data.message || "Login failed", status: res.status };
-    }
-
-    // Adjust these keys to match your backend response!
-    // Common: data.token OR data.accessToken
-    const token = data.token;
-
-    if (!token) {
-        return { ok: false, message: "No token returned by server" };
-    }
-
-    AUTH_TOKEN = token;
-
-    return { ok: true, message: "Logged in", user: data.user || null };
-});
-
-ipcMain.handle("auth:status", async () => {
-    return { ok: true, loggedIn: !!AUTH_TOKEN };
-});
-
-ipcMain.handle("auth:logout", async () => {
-    AUTH_TOKEN = null;
-    return { ok: true, message : "Logged Out"};
-});
-
-//---------------------------------------------------------------------------------------
-
+// Import local video file
 ipcMain.handle("videos:import", async () => {
-    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+    const db = getDb();
 
-    // pick file
-    const r = await dialog.showOpenDialog({
+    const pick = await dialog.showOpenDialog({
         title: "Import a video",
         properties: ["openFile"],
         filters: [
-        { name: "Videos", extensions: ["mp4", "mov", "mkv", "webm", "avi"] },
-        { name: "All Files", extensions: ["*"] },
-        ],
+            { name: "Videos", extensions: ["mp4", "mov", "mkv", "webm", "avi"] },
+            { name: "All Files", extensions: ["*"] }
+        ]
     });
 
-    if (r.canceled || !r.filePaths?.length) return { ok: false, message: "Canceled" };
-
-    const src = r.filePaths[0];
-    const title = path.basename(src);
-    const ext = path.extname(src);
-
-    // precheck
-    const qs = new URLSearchParams({ title }).toString();
-    const existsRes = await fetch(`${EXISTS_ENDPOINT}?${qs}`, {
-        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
-    });
-    const existsData = await existsRes.json().catch(() => ({}));
-
-    if (!existsRes.ok) {
-        return { ok: false, status: existsRes.status, message: existsData.message || "Precheck failed" };
+    if (pick.canceled || !pick.filePaths?.length) {
+        return { ok: false, message: "Canceled" };
     }
 
-    if (existsData.exists) {
-        return { ok: false, status: 409, code: "DUPLICATE_NAME", message: "A video with this name already exists." };
+    const src = pick.filePaths[0];
+    const title = basename(src);
+    const ext = extname(src);
+
+    // 1) Compute content hash to detect duplicates
+    const hash = await sha256File(src);
+
+    // 2) If already exists, DO NOT copy/store again
+    const existing = db.prepare(`
+        SELECT * FROM videos
+        WHERE content_hash = ?
+        LIMIT 1
+    `).get(hash);
+
+    if (existing) {
+        return {
+            ok: true,
+            deduped: true,
+            item: mapVideoRow(existing)
+        };
     }
 
-    // copy into app storage
-    const videoDir = videosDir();
+    // 3) Copy into app storage with safe unique filename
     const filename = `${makeId()}${ext}`;
-    const dest = path.join(videoDir, filename);
+    const dest = join(videosDir(), filename);
 
-    await fs.promises.copyFile(src, dest);
+    await promises.copyFile(src, dest);
 
-    const stat = await fs.promises.stat(dest);
-    const fileUrl = pathToFileURL(dest).href; // file:///...
+    // 4) Insert into DB
+    const info = db.prepare(`
+        INSERT INTO videos (title, filename, content_hash, source_type)
+        VALUES (?, ?, ?, 'local')
+    `).run(title, filename, hash);
 
-    // 3) register metadata (JSON only)
-    const res = await fetch(IMPORT_ENDPOINT, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${AUTH_TOKEN}`,
-        },
-        body: JSON.stringify({
-            title,
-            filename,
-            size: stat.size,
-            mimeType: null,
-        }),
-    });
+    const row = db.prepare(`SELECT * FROM videos WHERE id = ?`).get(info.lastInsertRowid);
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-        return { ok: false, status: res.status, message: data.message || "Register failed"};
-    }
-
-    return { ok: true, video: data.video, fileUrl };
+    return { ok: true, deduped: false, item: mapVideoRow(row) };
 });
 
-ipcMain.handle("videos:upload", async (_e, payload) => {
-    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+protocol.registerSchemesAsPrivileged([
+    {
+        scheme: "video",
+        privileges: {
+            standard: true,
+            secure: true,
+            supportFetchAPI: true
+        }
+    }
+]);
 
-    const title = payload?.title?.trim();
-    const externalUrl = payload?.externalUrl?.trim();
-    const provider = payload?.provider?.trim();
+// Add external link as a video
+ipcMain.handle("videos:upload", async (_event, payload) => {
+    const db = getDb();
+
+    const title = (payload?.title ?? "").trim();
+    const externalUrl = (payload?.externalUrl ?? "").trim();
+    const provider = (payload?.provider ?? "").trim() || null;
 
     if (!title || !externalUrl) {
         return { ok: false, message: "title and externalUrl are required" };
     }
-
-    const res = await fetch(`${UPLOAD_ENDPOINT}`, {
-        method: "POST",
-        headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${AUTH_TOKEN}`,
-        },
-        body: JSON.stringify({ title, externalUrl, provider }),
-    });
-
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-        return { ok: false, status: res.status, message: data.message || "Failed", error: data };
+    if (!isHttpUrl(externalUrl)) {
+        return { ok: false, message: "externalUrl must be a valid http/https URL" };
     }
 
-    return { ok: true, video: data.video };
+    // Optional dedupe by external_url (unique index will enforce too)
+    const exists = db.prepare(`
+        SELECT * FROM videos
+        WHERE external_url = ?
+        LIMIT 1
+    `).get(externalUrl);
+
+    if (exists) {
+        return { ok: true, deduped: true, item: mapVideoRow(exists) };
+    }
+
+    const info = db.prepare(`
+        INSERT INTO videos (title, source_type, external_url, provider)
+        VALUES (?, 'external', ?, ?)
+    `).run(title, externalUrl, provider);
+
+    const row = db.prepare(`SELECT * FROM videos WHERE id = ?`).get(info.lastInsertRowid);
+
+    return { ok: true, deduped: false, item: mapVideoRow(row) };
 });
 
-ipcMain.handle("videos:delete", async (_e, videoId) => {
-    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
-    if (!videoId) return { ok: false, message: "videoId is required" };
+// Delete a video (and remove from all playlists automatically via FK cascade)
+ipcMain.handle("videos:delete", async (_event, videoId) => {
+    const db = getDb();
+    const id = Number(videoId);
 
-    const res = await fetch(`${DELETE_ENDPOINT}/${videoId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
-    });
+    if (!id) return { ok: false, message: "videoId required" };
 
-    const data = await res.json().catch(() => ({}));
+    const row = db.prepare(`SELECT * FROM videos WHERE id = ?`).get(id);
+    if (!row) return { ok: false, status: 404, message: "Video not found" };
 
-    if (!res.ok) {
-        return { ok: false, status: res.status, message: data.message || "Delete failed" };
+    // Delete DB record first (playlist_items cascades)
+    db.prepare(`DELETE FROM videos WHERE id = ?`).run(id);
+
+    // If local, delete stored file
+    if (row.source_type === "local" && row.filename) {
+        const filePath = join(videosDir(), row.filename);
+        await promises.unlink(filePath).catch(() => {});
     }
 
-    // If it's a local video, delete file from app storage
-    if (data.sourceType === "local" && data.filename) {
-        const filePath = path.join(videosDir(), data.filename);
-        await fs.promises.unlink(filePath).catch(() => {});
-    }
-
-    return { ok: true, deleted: data };
+    return { ok: true, deleted: mapVideoRow(row) };
 });
 
-ipcMain.handle("videos:list", async () => {
-    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
-
-    const res = await fetch(`${BACKEND_URL}/api/videos/list`, {
-        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
-    });
-
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-        return { ok: false, status: res.status, message: data.message || "Failed to fetch videos" };
-    }
-
-    const videos = Array.isArray(data.videos) ? data.videos : [];
-
-    const enriched = videos.map((v) => {
-        const localPath = v?.filename ? path.join(videosDir(), v.filename) : null;
-        const exists = localPath ? fs.existsSync(localPath) : false;
-        const fileUrl = exists ? pathToFileURL(localPath).href : null;
-
-        return { ...v, fileUrl, missing: !exists };
-    });
-
-    return { ok: true, videos: enriched };
-});
-
-ipcMain.handle("videos:openExternal", async (_e, url) => {
+// Open external link in browser
+ipcMain.handle("videos:openExternal", async (_event, url) => {
     if (typeof url !== "string" || !url) return { ok: false, message: "Invalid URL" };
-
-    try {
-        const u = new URL(url);
-        if (!["http:", "https:"].includes(u.protocol)) {
-        return { ok: false, message: "Only http/https links allowed" };
-        }
-    } catch {
-        return { ok: false, message: "Invalid URL" };
-    }
-
+    if (!isHttpUrl(url)) return { ok: false, message: "Only http/https links allowed" };
     await shell.openExternal(url);
     return { ok: true };
 });
 
-//---------------------------------------------------------------------------------------
+// ------------------------- IPC: Playlists -------------------------
 
 ipcMain.handle("playlists:list", async () => {
-    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
-
-    const res = await fetch(PLAYLISTS_ENDPOINT, {
-        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, status: res.status, message: data.message };
-
-    return { ok: true, playlists: data.playlists || [] };
+    const db = getDb();
+    const rows = db.prepare(`SELECT * FROM playlists ORDER BY id DESC`).all();
+    return { ok: true, items: rows };
 });
 
-ipcMain.handle("playlists:getList", async (_e, { playlistId }) => {
-    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+ipcMain.handle("playlists:create", async (_event, payload) => {
+    const db = getDb();
+    const name = (payload?.name ?? "").trim();
+    if (!name) return { ok: false, message: "Playlist name required" };
+
+    const info = db.prepare(`INSERT INTO playlists (name) VALUES (?)`).run(name);
+    const row = db.prepare(`SELECT * FROM playlists WHERE id = ?`).get(info.lastInsertRowid);
+    return { ok: true, item: row };
+});
+
+// Get playlist + its items (videos)
+ipcMain.handle("playlists:getList", async (_event, payload) => {
+    const db = getDb();
+    const playlistId = Number(payload?.playlistId);
+
     if (!playlistId) return { ok: false, message: "playlistId required" };
 
-    const res = await fetch(`${PLAYLISTS_ENDPOINT}/${playlistId}`, {
-        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
-    });
+    const playlist = db.prepare(`SELECT * FROM playlists WHERE id = ?`).get(playlistId);
+    if (!playlist) return { ok: false, status: 404, message: "Playlist not found" };
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, status: res.status, message: data.message };
+    const items = db.prepare(`
+        SELECT v.*, pi.position, pi.added_at
+        FROM playlist_items pi
+        JOIN videos v ON v.id = pi.video_id
+        WHERE pi.playlist_id = ?
+        ORDER BY pi.position ASC
+    `).all(playlistId);
 
-    return { ok: true, playlist: data.playlist };
+    return { ok: true, playlist, items: items.map(mapVideoRow) };
 });
 
-ipcMain.handle("playlists:create", async (_e, {playlistName}) => {
-    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+// Add a library video to a playlist (reference-only; no duplication of file/video row)
+ipcMain.handle("playlists:addItem", async (_event, payload) => {
+    const db = getDb();
+    const playlistId = Number(payload?.playlistId);
+    const videoId = Number(payload?.videoId);
 
-    const modName = (playlistName || "").trim();
-    if (!modName) return { ok: false, message: "name required" };
-
-    const res = await fetch(PLAYLISTS_ENDPOINT, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${AUTH_TOKEN}`,
-        },
-        body: JSON.stringify({ name: modName }),
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, status: res.status, message: data.message };
-
-    return { ok: true, playlist: data.playlist };
-});
-
-ipcMain.handle("playlists:addItem", async (_e, { playlistId, videoId }) => {
-    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
     if (!playlistId || !videoId) return { ok: false, message: "playlistId and videoId required" };
 
-    const res = await fetch(`${PLAYLISTS_ENDPOINT}/${playlistId}/items`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${AUTH_TOKEN}`,
-        },
-        body: JSON.stringify({ videoId }),
-    });
+    // next position
+    const posRow = db.prepare(`
+        SELECT COALESCE(MAX(position), -1) AS maxPos
+        FROM playlist_items
+        WHERE playlist_id = ?
+    `).get(playlistId);
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, status: res.status, message: data.message };
+    const nextPos = (posRow?.maxPos ?? -1) + 1;
+
+    // PRIMARY KEY (playlist_id, video_id) prevents duplicates in same playlist
+    db.prepare(`
+        INSERT OR IGNORE INTO playlist_items (playlist_id, video_id, position)
+        VALUES (?, ?, ?)
+    `).run(playlistId, videoId, nextPos);
 
     return { ok: true };
 });
 
-ipcMain.handle("playlists:removeItem", async (_e, { playlistId, videoId }) => {
-    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+ipcMain.handle("playlists:removeItem", async (_event, payload) => {
+    const db = getDb();
+    const playlistId = Number(payload?.playlistId);
+    const videoId = Number(payload?.videoId);
+
     if (!playlistId || !videoId) return { ok: false, message: "playlistId and videoId required" };
 
-    const res = await fetch(`${PLAYLISTS_ENDPOINT}/${playlistId}/items/${videoId}`, {
-        method: "DELETE",
-        headers: {
-            Authorization: `Bearer ${AUTH_TOKEN}`,
-        },
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, status: res.status, message: data.message };
+    db.prepare(`
+        DELETE FROM playlist_items
+        WHERE playlist_id = ? AND video_id = ?
+    `).run(playlistId, videoId);
 
     return { ok: true };
 });
 
-ipcMain.handle("playlists:deletePlaylist", async (_e, { playlistId }) => {
-    if (!AUTH_TOKEN) return { ok: false, message: "Not authenticated" };
+ipcMain.handle("playlists:deletePlaylist", async (_event, payload) => {
+    const db = getDb();
+    const playlistId = Number(payload?.playlistId);
+
     if (!playlistId) return { ok: false, message: "playlistId required" };
 
-    const res = await fetch(`${PLAYLISTS_ENDPOINT}/${playlistId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
-    });
+    db.prepare(`DELETE FROM playlists WHERE id = ?`).run(playlistId);
+    // playlist_items will delete via cascade too, but this is safe even if cascade is off
+    db.prepare(`DELETE FROM playlist_items WHERE playlist_id = ?`).run(playlistId);
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, status: res.status, message: data.message };
-
-    return { ok: true};
+    return { ok: true };
 });
-//---------------------------------------------------------------------------------------
+
+// ------------------------- Window / App lifecycle -------------------------
 
 async function createWindow() {
     const win = new BrowserWindow({
-        width: 1000,
-        height: 700,
+        width: 1100,
+        height: 720,
         webPreferences: {
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: true,
-            preload: path.join(__dirname, "preload.js")
+            preload: join(__dirname, "preload.js")
         }
     });
 
-    try {
-        await waitOn({
-            resources: [`${BACKEND_URL}/api/health`],
-            timeout: 30_000,
-            interval: 250,
-            // accepts non-200 if server responds
-            validateStatus: (status) => status >= 200 && status < 500,
-        });
-        const devUrl = process.env.VITE_DEV_SERVER_URL;
-
-        if (devUrl) {
-            // Dev: Vite server
-            await win.loadURL(devUrl);
-        } else {
-            // Prod: built files
-            await win.loadFile(path.join(__dirname, "..", "renderer", "dist", "index.html"));
-        }
-
-    } catch (err) {
-        // If backend never became ready, show a simple error page
-        await win.loadURL("data:text/html," + encodeURIComponent(
-            `<h2>Backend failed to start</h2>
-            <p>Could not reach ${BACKEND_URL}/api/health within 30 seconds.</p>
-            <pre>${String(err)}</pre>
-            `)
-        );
+    // Dev: load Vite server; Prod: load built renderer
+    const devUrl = process.env.VITE_DEV_SERVER_URL;
+    if (devUrl) {
+        await win.loadURL(devUrl);
+    } else {
+        await win.loadFile(join(__dirname, "..", "renderer", "dist", "index.html"));
     }
 }
 
 app.whenReady().then(async () => {
-    startBackend();
-    await createWindow();
+    try {
+        // Ensure folder exists
+        videosDir();
+
+        // Serve local videos as: video://local/<id>
+        protocol.registerFileProtocol("video", (request, callback) => {
+            try {
+                const u = new URL(request.url);
+
+                // Expect: video://local/123
+                if (u.host !== "local") return callback({ error: -302 });
+
+                const id = Number(u.pathname.replace("/", ""));
+                if (!id) return callback({ error: -324 });
+
+                const db = getDb();
+                const row = db.prepare(`SELECT * FROM videos WHERE id = ?`).get(id);
+
+                if (!row || row.source_type !== "local" || !row.filename) {
+                    return callback({ error: -6 }); // FILE_NOT_FOUND
+                }
+
+                const filePath = join(videosDir(), row.filename);
+                if (!existsSync(filePath)) return callback({ error: -6 });
+
+                callback({ path: filePath });
+            } catch (e) {
+                console.error("video:// protocol error:", e);
+                callback({ error: -2 });
+            }
+        });
+
+        await createWindow();
+    } catch (err) {
+        console.error("Failed to create window:", err);
+        app.quit();
+    }
 });
 
-app.on("before-quit", () => {
-    if (backendProcess && !backendProcess.killed) backendProcess.kill();
+app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+});
+
+app.on("activate", async () => {
+    if (BrowserWindow.getAllWindows().length === 0) await createWindow();
 });

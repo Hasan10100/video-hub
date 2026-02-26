@@ -1,68 +1,199 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+/* -----------------------------
+   Base / Reset
+------------------------------ */
+* {
+    box-sizing: border-box;
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f172a; /* dark slate */
+    color: #e2e8f0;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+/* -----------------------------
+   Layout
+------------------------------ */
+
+h2 {
+    margin: 0;
+    padding: 20px;
+    font-weight: 600;
+    background: #111827;
+    border-bottom: 1px solid #1f2937;
 }
+
+.card {
+    padding: 24px;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+/* -----------------------------
+   Typography
+------------------------------ */
+
+h3 {
+    margin: 0 0 10px 0;
+    font-weight: 600;
+}
+
+h4 {
+    margin: 0 0 8px 0;
+    font-weight: 500;
+    color: #cbd5e1;
+}
+
+hr {
+    border: none;
+    border-top: 1px solid #1f2937;
+    margin: 24px 0;
+}
+
+/* -----------------------------
+   Inputs
+------------------------------ */
+
+input {
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #1f2937;
+    background: #1e293b;
+    color: #e2e8f0;
+    outline: none;
+}
+
+input:focus {
+    border-color: #3b82f6;
+}
+
+/* -----------------------------
+   Buttons
+------------------------------ */
 
 button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+    padding: 8px 14px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    background: #334155;
+    color: #e2e8f0;
+    transition: all 0.15s ease;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+button:hover {
+    background: #475569;
+}
+
+button:active {
+    transform: scale(0.97);
+}
+
+button.primary {
+    background: #2563eb;
+}
+
+button.primary:hover {
+    background: #3b82f6;
+}
+
+button.danger {
+    background: #b91c1c;
+}
+
+button.danger:hover {
+    background: #dc2626;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* -----------------------------
+   Lists
+------------------------------ */
+
+ul {
+    list-style: none;
+    padding: 0;
+    margin: 10px 0;
+}
+
+li {
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: #1e293b;
+    margin-bottom: 6px;
+    transition: background 0.15s ease;
+}
+
+li:hover {
+    background: #273449;
+}
+
+/* -----------------------------
+   Panels / Sections
+------------------------------ */
+
+.panel {
+    background: #111827;
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid #1f2937;
+    margin-top: 12px;
+}
+
+/* -----------------------------
+   Video Player
+------------------------------ */
+
+video {
+    border-radius: 8px;
+    background: black;
+    border: 1px solid #1f2937;
+}
+
+/* -----------------------------
+   Health Badge
+------------------------------ */
+
+#healthBadge {
+    font-size: 0.85rem;
+    padding: 6px 10px;
+    border-radius: 20px;
+    background: #1e293b;
+    border: 1px solid #1f2937;
+}
+
+/* -----------------------------
+   Scrollbar (Desktop feel)
+------------------------------ */
+
+::-webkit-scrollbar {
+    width: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0f172a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+}
+
+/* -----------------------------
+   Small subtle animations
+------------------------------ */
+
+.card,
+.panel,
+li {
+    transition: all 0.2s ease;
 }
