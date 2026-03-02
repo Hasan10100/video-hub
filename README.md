@@ -1,63 +1,53 @@
-# 🎬 Video Hub – Desktop Video Aggregation App
+# 🎬 Video Hub – Desktop Media Manager
 
-A secure cross-platform desktop application built with **Electron + React + Express** that allows users to manage and play videos from multiple sources (local files, YouTube, Vimeo) in a unified interface.
+A single-user desktop media management application built with **Electron + SQLite**, designed for managing local and external videos with structured playlists.
 
----
+> Refactored from a full-stack architecture into a clean, self-contained desktop application.
+
 ## 🚀 Overview
 
-Video Hub provides:
+Video Hub is a lightweight desktop application that allows users to:
 
-- 🔐 Secure user authentication  
-- 🎥 Unified global video library (Local + External)  
-- 📂 Playlist creation and management  
-- ▶ Integrated video playback  
+- Import and manage local video files
+- Add external video links (YouTube, Vimeo, direct URLs)
+- Organize videos into playlists
+- Avoid duplicate storage using content hashing
+- Play media directly within the application
 
-This project demonstrates secure Electron architecture using `contextBridge` with a fully separated backend.
+This version focuses on **single-user, offline-first architecture**, eliminating backend complexity while maintaining structured data management.
 
----
-## ✨ Core Features
+## ✨ Key Principles
 
-### 🔐 Authentication
-- User Registration
-- Login / Logout
-- Secure session handling
+- No backend server
+- No authentication layer
+- SQLite for persistent local storage
+- Videos stored inside app-controlled directory
+- Playlists reference videos (no duplication)
 
-### 🎥 Video Library
-- Upload local videos
-- Add YouTube / Vimeo links
-- Filter: All / Local / External
-- Dedicated in-app player
+## 📦 Features
+
+### 🎞 Local Video Import
+
+- File picker dialog
+- SHA-256 hashing
+- Duplicate detection
+- Stored in app-managed directory
+
+### 🌐 External Videos
+
+- Save URL + metadata
+- Open externally if needed
+- Treated as first-class video entries
 
 ### 📂 Playlists
-- Create & manage playlists
-- Add videos from global library
-- Remove videos without deleting globally
 
----
-## 🧱 Tech Stack
+- Create / Delete playlists
+- Add existing videos
+- Remove from playlist (without deleting from library)
 
-- **Desktop Framework:** Electron  
-- **Frontend (Renderer):** React + Vite  
-- **Preload Layer:** contextBridge (secure API exposure)  
-- **Backend:** Node.js + Express  
-- **Database:** MongoDB + Mongoose  
-- **Authentication:** bcrypt + Sessions / JWT  
-- **External Playback:** YouTube IFrame API, Vimeo Player API  
+## 🛠 Tech Stack
 
----
-## 🏗 Architecture
-
-**Architecture Pattern:**  
-Client–Server + Layered Backend + Secure Context Isolation  
-
----
-### 🔒 Security Principles
-
-- `contextIsolation: true`
-- `nodeIntegration: false`
-- Controlled API exposure via preload
-- Backend input validation
-- Password hashing with bcrypt
-- Session cleanup on logout
-
----
+- **Electron**
+- **Node.js**
+- **better-sqlite3**
+- Vanilla HTML/CSS -> **React - Typescript** (Future)
