@@ -15,6 +15,86 @@ const __dirname = path.dirname(__filename);
 import { getDb } from "./db.js";
 
 // ------------------------- Helpers -------------------------
+import https from "https";
+
+function extractYouTubeId(url) {
+    try {
+        const u = new URL(url);
+
+        // youtu.be/VIDEOID
+        if (u.hostname.includes("youtu.be")) {
+            const id = u.pathname.slice(1);
+            return id || null;
+        }
+
+        // youtube.com/watch?v=VIDEOID
+        if (u.hostname.includes("youtube.com")) {
+            const id = u.searchParams.get("v");
+            return id || null;
+        }
+
+        // youtube.com/shorts/VIDEOID
+        if (u.hostname.includes("youtube.com") && u.pathname.startsWith("/shorts/")) {
+            const id = u.pathname.split("/")[2];
+            return id || null;
+        }
+
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+function guessProvider(url) {
+    try {
+        const h = new URL(url).hostname.toLowerCase();
+        if (h.includes("youtu.be") || h.includes("youtube.com")) return "youtube";
+        if (h.includes("vimeo.com")) return "vimeo";
+        return "link";
+    } catch {
+        return "link";
+    }
+}
+
+function fetchJson(url, { timeoutMs = 5000 } = {}) {
+    return new Promise((resolve, reject) => {
+        const req = https.get(url, (res) => {
+            let data = "";
+            res.on("data", (chunk) => (data += chunk));
+            res.on("end", () => {
+                try {
+                    resolve(JSON.parse(data));
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
+
+        req.on("error", reject);
+        req.setTimeout(timeoutMs, () => {
+            req.destroy(new Error("Request timed out"));
+        });
+    });
+}
+
+// No API key needed
+async function fetchYouTubeOEmbed(externalUrl) {
+    const oembedUrl =
+        "https://www.youtube.com/oembed?format=json&url=" + encodeURIComponent(externalUrl);
+
+    const meta = await fetchJson(oembedUrl, { timeoutMs: 5000 });
+
+    return {
+        title: meta?.title ?? null,
+        thumbnailUrl: meta?.thumbnail_url ?? null,
+        authorName: meta?.author_name ?? null
+    };
+}
+
+// A fallback thumbnail derived from ID (works even if oEmbed fails)
+function youtubeThumbFromId(videoId) {
+    return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+}
 
 function videosDir() {
     const dir = join(app.getPath("userData"), "videos");
@@ -72,7 +152,9 @@ function mapVideoRow(row) {
         provider: row.provider,
         createdAt: row.created_at,
         fileUrl,
-        missing
+        missing,
+        thumbnailUrl: row.thumbnail_url ?? null,
+        authorName: row.author_name ?? null
     };
 }
 
@@ -188,39 +270,52 @@ protocol.registerSchemesAsPrivileged([
     }
 ]);
 
-// Add external link as a video
+// main.js (inside videos:upload)
 ipcMain.handle("videos:upload", async (_event, payload) => {
     const db = getDb();
 
-    const title = (payload?.title ?? "").trim();
     const externalUrl = (payload?.externalUrl ?? "").trim();
-    const provider = (payload?.provider ?? "").trim() || null;
+    let title = (payload?.title ?? "").trim();
+    let provider = (payload?.provider ?? "").trim() || null;
 
-    if (!title || !externalUrl) {
-        return { ok: false, message: "title and externalUrl are required" };
-    }
-    if (!isHttpUrl(externalUrl)) {
-        return { ok: false, message: "externalUrl must be a valid http/https URL" };
-    }
+    if (!externalUrl) return { ok: false, message: "externalUrl is required" };
+    if (!isHttpUrl(externalUrl)) return { ok: false, message: "externalUrl must be a valid http/https URL" };
 
-    // Optional dedupe by external_url (unique index will enforce too)
+    provider = provider || guessProvider(externalUrl);
+
+    // dedupe by external_url
     const exists = db.prepare(`
-        SELECT * FROM videos
-        WHERE external_url = ?
-        LIMIT 1
+        SELECT * FROM videos WHERE external_url = ? LIMIT 1
     `).get(externalUrl);
 
-    if (exists) {
-        return { ok: true, deduped: true, item: mapVideoRow(exists) };
+    if (exists) return { ok: true, deduped: true, item: mapVideoRow(exists) };
+
+    // --- fetch metadata for YouTube ---
+    let thumbnailUrl = null;
+    let authorName = null;
+
+    if (provider === "youtube") {
+        try {
+            const meta = await fetchYouTubeOEmbed(externalUrl); // you already have this
+            if (!title) title = meta.title || "";
+            thumbnailUrl = meta.thumbnailUrl || null;
+            authorName = meta.authorName || null;
+        } catch {
+            // fallback thumbnail from ID if oEmbed fails
+            const id = extractYouTubeId(externalUrl);
+            if (id) thumbnailUrl = youtubeThumbFromId(id);
+        }
     }
 
+    // final fallback title
+    if (!title) title = externalUrl;
+
     const info = db.prepare(`
-        INSERT INTO videos (title, source_type, external_url, provider)
-        VALUES (?, 'external', ?, ?)
-    `).run(title, externalUrl, provider);
+        INSERT INTO videos (title, source_type, external_url, provider, thumbnail_url, author_name)
+        VALUES (?, 'external', ?, ?, ?, ?)
+    `).run(title, externalUrl, provider, thumbnailUrl, authorName);
 
     const row = db.prepare(`SELECT * FROM videos WHERE id = ?`).get(info.lastInsertRowid);
-
     return { ok: true, deduped: false, item: mapVideoRow(row) };
 });
 
@@ -283,12 +378,22 @@ ipcMain.handle("playlists:getList", async (_event, payload) => {
     if (!playlist) return { ok: false, status: 404, message: "Playlist not found" };
 
     const items = db.prepare(`
-        SELECT v.*, pi.position, pi.added_at
-        FROM playlist_items pi
-        JOIN videos v ON v.id = pi.video_id
-        WHERE pi.playlist_id = ?
-        ORDER BY pi.position ASC
-    `).all(playlistId);
+        SELECT
+        pi.playlist_id,
+        pi.video_id,
+        pi.position,
+        v.id,
+        v.title,
+        v.source_type,
+        v.external_url,
+        v.provider,
+        v.thumbnail_url,
+        v.filename
+    FROM playlist_items pi
+    JOIN videos v ON v.id = pi.video_id
+    WHERE pi.playlist_id = ?
+    ORDER BY pi.position ASC
+`).all(playlistId);
 
     return { ok: true, playlist, items: items.map(mapVideoRow) };
 });

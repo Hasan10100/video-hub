@@ -25,20 +25,11 @@ export function getDb() {
         CREATE TABLE IF NOT EXISTS videos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
-
-            -- storage identity (local files only)
             filename TEXT,
-
-            -- true identity for dedupe (local files only)
             content_hash TEXT,
-
-            -- local vs external link
             source_type TEXT NOT NULL CHECK (source_type IN ('local', 'external')),
-
-            -- external links only
             external_url TEXT,
             provider TEXT,
-
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -76,6 +67,17 @@ export function getDb() {
         CREATE INDEX IF NOT EXISTS idx_playlist_items_playlist
         ON playlist_items(playlist_id);
     `);
+
+    // ---- Simple migrations: add missing columns if needed ----
+    const cols = db.prepare(`PRAGMA table_info(videos)`).all().map(c => c.name);
+    function addCol(name, ddl) {
+        if (!cols.includes(name)) {
+            try { db.exec(`ALTER TABLE videos ADD COLUMN ${ddl}`); } catch {}
+        }
+    }
+
+    addCol("thumbnail_url", "thumbnail_url TEXT");
+    addCol("author_name", "author_name TEXT");
 
     return db;
 }

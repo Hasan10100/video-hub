@@ -1,7 +1,5 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-const BACKEND_PORT = process.env.BACKEND_PORT || "5000";
-
 contextBridge.exposeInMainWorld("api", {
     getHealth: () => ipcRenderer.invoke("api:health"),
     videos: {
